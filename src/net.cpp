@@ -12,13 +12,7 @@
 //CONDITIONS OF ANY KIND, either express or implied. See the License for the
 //specific language governing permissions and limitations under the License.
 
-#include "feather_generated.h"
 #include "layer_factory.h"
-//
-#ifdef FEATHER_OPENCL
-#include "layer_factory_cl.h"
-#include "layers_cl/input_layer_cl.h"
-#endif
 #include "net.h"
 #include "layer.h"
 #include "layers/input_layer.h"
@@ -28,12 +22,6 @@
 #include <stdio.h>
 #include <cstring>
 
-#define CHECK_TYPE(rt) if (!CheckDtype())           \
-                    {                               \
-                        LOGE("Dtype check failed. Please use uint16_t or float for GPU_CL; float for CPU"); \
-                        return rt;                  \
-                    }                               \
-
 #define LAYER_TIMING
 #define LAYER_INIT_TIMING
 #define PRINT_SETUP_LOG
@@ -42,41 +30,14 @@
 namespace feather
 {
 
-template<class Dtype>
-bool Net<Dtype>::CheckDtype()
+Net::Net(size_t num_threads, DeviceType device_type)
 {
-    if (rt_param->device_type() == DeviceType::GPU_CL)
-    {
-#ifdef FEATHER_OPENCL
-        return std::is_same<Dtype, uint16_t>::value | std::is_same<Dtype, float>::value;
-#else
-        LOGE("Please compile with FEATHER_OPENCL on to use GPU_CL type");
-        return false;
-#endif
-    }
-    return std::is_same<Dtype, float>::value;
-}
-
-
-template<class Dtype>
-Net<Dtype>::Net(size_t num_threads, DeviceType device_type)
-{
-
-
-#ifdef  FEATHER_OPENCL
-    register_layer_creators_cl();
-#endif
     register_layer_creators();
     CommonMemPool<Dtype> *mempool = new CommonMemPool<Dtype>();
     rt_param = new RuntimeParameter<Dtype>(mempool, device_type, num_threads);
-
-    CHECK_TYPE();
-
 }
 
-
-template<class Dtype>
-Net<Dtype>::~Net()
+Net::~Net()
 {
 
     for (int i = 0; i < layers.size(); ++i)
@@ -87,51 +48,176 @@ Net<Dtype>::~Net()
     delete rt_param->common_mempool();
     delete rt_param;
     rt_param = NULL;
-
 }
 
-template<class Dtype>
-int Net<Dtype>::ExtractBlob(float* output_ptr, std::string name)
+int Net::LoadParam(const char* path)
 {
-    CHECK_TYPE(1);
+    FILE *fp = NULL;
+    fp = fopen(model_path, "rb");
+    if (fp == NULL)
+    {
+        LOGE("Cannot open feather model!\n");
+        exit(-1);
+    }
+    this->LoadParam(fp);
+    fclose(fp);
+}
+
+int Net::LoadParam(FILE* fp)
+{
+    if(ChkParamHeader(fp) == -1)
+    {
+        return -1;
+    }
+    // parse
+    int layer_count = 0;
+    int blob_count = 0;
+    nbr = fscanf(fp, "%d %d", &layer_count, &blob_count);
+    if (nbr != 2 || layer_count <= 0 || blob_count <= 0)
+    {
+        fprintf(stderr, "issue with param file\n");
+        return -1;
+    }
+    printf("layer_size %d blob_size %d\n", layer_count, blob_count);
+    layers.resize((size_t) layer_count);
+    // blobs.resize((size_t) blob_count);
+
+    ParamDict pd;
+
+    int blob_index = 0;
+    for (int i=0; i<layer_count; i++)
+    {
+        int nscan = 0;
+
+        char layer_type[257];
+        char layer_name[257];
+        int bottom_count = 0;
+        int top_count = 0;
+        nscan = fscanf(fp, "%256s %256s %d %d", layer_type, layer_name, &bottom_count, &top_count);
+        if (nscan != 4)
+        {
+            continue;
+        }
+
+//        Layer* layer = create_layer(layer_type);
+//        if (!layer)
+//        {
+//            layer = create_custom_layer(layer_type);
+//        }
+//        if (!layer)
+//        {
+//            fprintf(stderr, "layer %s not exists or registered\n", layer_type);
+//            clear();
+//            return -1;
+//        }
+
+
+//      fprintf(stderr, "new layer %d %s\n", i, layer_name);
+
+
+        Layer *layer = LayerRegistry::CreateLayer(rt_param);
+        if (!layer)
+        {
+            fprintf(stderr, "layer %s not exists or registered\n", layer_type);
+            return -1;
+        }
+        layer->name = std::string(layer_name);
+        layer->type = std::string(layer_type);
+        layer->bottoms.resize(bottom_count);
+
+        for (int j=0; j<bottom_count; j++)
+        {
+            char bottom_name[257];
+            nscan = fscanf(fp, "%256s", bottom_name);
+            if (nscan != 1)
+            {
+                continue;
+            }
+	        printf("bottom name %s\n", bottom_name);
+#if 0
+            int bottom_blob_index = find_blob_index_by_name(bottom_name);
+            if (bottom_blob_index == -1)
+            {
+                Blob& blob = blobs[blob_index];
+
+                bottom_blob_index = blob_index;
+
+                blob.name = std::string(bottom_name);
+//                 fprintf(stderr, "new blob %s\n", bottom_name);
+
+                blob_index++;
+            }
+
+            Blob& blob = blobs[bottom_blob_index];
+
+            blob.consumers.push_back(i);
+
+            layer->bottoms[j] = bottom_blob_index;
+#endif
+        }
+
+        //layer->tops.resize(top_count);
+        for (int j=0; j<top_count; j++)
+        {
+
+            char blob_name[257];
+            nscan = fscanf(fp, "%256s", blob_name);
+            if (nscan != 1)
+            {
+                continue;
+            }
+	    printf("top name %s\n", blob_name);
+#if 0
+        Blob& blob = blobs[blob_index];
+        blob.name = std::string(blob_name);
+        fprintf(stderr, "new blob %s\n", blob_name);
+
+        blob.producer = i;
+
+        layer->tops[j] = blob_index;
+
+        blob_index++;
+#endif
+        }
+
+        // layer specific params
+        int pdlr = pd.load_param(fp);
+        if (pdlr != 0)
+        {
+            fprintf(stderr, "ParamDict load_param failed\n");
+            continue;
+        }
+
+        //int lr = layer->load_param(pd);
+        //if (lr != 0)
+        //{
+        //    fprintf(stderr, "layer load_param failed\n");
+        //    continue;
+        //}
+
+        //layers[i] = layer;
+    }
+    return 0;
+}
+
+int Net::ExtractBlob(float* output_ptr, std::string name)
+{
     if (blob_map.find(std::string(name)) == blob_map.end())
     {
         LOGE("Cannot find blob %s\n", name.c_str());
         return -1;
     }
-    const Blob<Dtype> *p_blob = blob_map[name];
-    switch (rt_param->device_type())
-    {
-        case DeviceType::CPU:
-            {
-                const size_t data_size = p_blob->data_size();
-                const Dtype *data = p_blob->data();
-                memcpy(output_ptr, data, sizeof(Dtype) * data_size);
-                break;
-            }
-        case DeviceType::GPU_CL:
-#ifdef FEATHER_OPENCL
-            p_blob->ReadFromDeviceCHW(rt_param->command_queue(), output_ptr);
-            break;
-#else
-            LOGE("Please compile OpenCL to use device type GPU_CL.");
-            return -1;
-#endif
-        case DeviceType::GPU_GL:
-            LOGE("Not Implemented yet");
-            return -1;
-        default:
-            LOGE("Unsupported device type");
-            return -1;
-    }
+    const Blob<float> *p_blob = blob_map[name];
+       const size_t data_size = p_blob->data_size();
+                const float *data = p_blob->data();
+                memcpy(output_ptr, data, sizeof(float) * data_size);
+    
 
     return 0;
 }
 
-template<class Dtype>
-int Net<Dtype>::PrintBlobData(std::string blob_name)
+int Net::PrintBlobData(std::string blob_name)
 {
-    CHECK_TYPE(1);
     size_t data_size;
     this->GetBlobDataSize(&data_size, blob_name);
     float *arr = (float*) malloc(sizeof(float) * data_size);
@@ -148,59 +234,26 @@ int Net<Dtype>::PrintBlobData(std::string blob_name)
     return 0;
 }
 
-template<class Dtype>
-int Net<Dtype>::GetBlobDataSize(size_t *data_size, std::string name)
+int Net::GetBlobDataSize(size_t *data_size, std::string name)
 {
-    CHECK_TYPE(1);
-
     if (blob_map.find(std::string(name)) == blob_map.end())
     {
         LOGE("Cannot find blob %s\n", name.c_str());
         return -1;
     }
-    const Blob<Dtype> *p_blob = blob_map[name];
+    const Blob<float> *p_blob = blob_map[name];
     *data_size = p_blob->data_size();
     return 0;
 }
 
-template<class Dtype>
-int Net<Dtype>::Forward(float *input)
-{
-    CHECK_TYPE(1);
 
-    switch (rt_param->device_type())
-    {
-        case DeviceType::CPU:
-            {
-                InputLayer *input_layer = (InputLayer *)layers[0];
-                for (int i = 0; i < input_layer->input_size(); ++i)
-                {
-                    input_layer->CopyInput(input_layer->input_name(i), input);
-                }
-                break;
-            }
-        case DeviceType::GPU_CL:
-#ifdef FEATHER_OPENCL
-            {
-                InputLayerCL<Dtype> *input_layer = (InputLayerCL<Dtype> *)layers[0];
-                for (int i = 0; i < input_layer->input_size(); ++i)
-                {
-                    //LOGI("%s", input_layer->input_name(i).c_str());
-                    input_layer->CopyInput(input_layer->input_name(i), input);
-                }
-                break;
-            }
-#else
-            LOGE("Please compile OpenCL to use device type GPU_CL.");
-            return -1;
-#endif
-        case DeviceType::GPU_GL:
-            LOGE("Not implemented yet");
-            return -1;
-        default:
-            LOGE("Unsupported device type");
-            return -1;
-    }
+int Net::Forward()
+{
+    // InputLayer *input_layer = (InputLayer *)layers[0];
+    // for (int i = 0; i < input_layer->input_size(); ++i)
+    // {
+    //     input_layer->CopyInput(input_layer->input_name(i), input);
+    // }
 
     int layer_size = layers.size();
 
@@ -212,28 +265,7 @@ int Net<Dtype>::Forward(float *input)
         clock_gettime(CLOCK_MONOTONIC, &tpstart);
 #endif
         //LOGD("Forward layer%d:%s %s\n", i, layers_cl[i]->name().c_str(), layers_cl[i]->type().c_str());
-        // layers[i]->Forward();
-        switch (rt_param->device_type())
-        {
-            case DeviceType::CPU:
-                layers[i]->Forward();
-                break;
-            case DeviceType::GPU_CL:
-#ifdef FEATHER_OPENCL
-                layers[i]->ForwardCL();
-                break;
-#else
-                LOGE("Please compile OpenCL to use device type GPU_CL.");
-                return -1;
-#endif
-            case DeviceType::GPU_GL:
-                LOGE("Not implemented yet");
-                return -1;
-            default:
-                LOGE("Unsupported device type");
-                return -1;
-        }
-
+        layers[i]->Forward();
 
 #if 0
         for (size_t j = 0; j < layers[i]->top_blob_size(); j++)
@@ -258,87 +290,61 @@ int Net<Dtype>::Forward(float *input)
     return 0;
 }
 
-template<class Dtype>
-int Net<Dtype>::Forward(float* input, int height, int width)
-{
-    CHECK_TYPE(1);
-    switch (rt_param->device_type())
-    {
-        case DeviceType::CPU:
-            {
-                InputLayer *input_layer = (InputLayer *)layers[0];
-                input_layer->Reshape(input_layer->input_name(0), height, width);
-                input_layer->CopyInput(input_layer->input_name(0), input);
-                break;
-            }
-        case DeviceType::GPU_CL:
-#ifdef FEATHER_OPENCL
-            {
-                InputLayerCL<Dtype> *input_layer = (InputLayerCL<Dtype> *)layers[0];
-                input_layer->ReshapeFloat(input_layer->input_name(0), height, width);
-                input_layer->CopyInput(input_layer->input_name(0), input);
-                break;
-            }
-#else
-            LOGE("Please compile OpenCL to use device type GPU_CL.");
-            return -1;
-#endif
-        case DeviceType::GPU_GL:
-            LOGE("Not implemented yet");
-            return -1;
-        default:
-            LOGE("Unsupported device type");
-            return -1;
-    }
+// int Net::Forward(float* input, int height, int width)
+// {
+//     InputLayer *input_layer = (InputLayer *)layers[0];
+//     input_layer->Reshape(input_layer->input_name(0), height, width);
+//     input_layer->CopyInput(input_layer->input_name(0), input);
+//     break;
 
-    int layer_size = layers.size();
+//     int layer_size = layers.size();
 
-    for (int i = 1; i < layer_size; ++i)
-    {
-        // sleep(2);
-#ifdef LAYER_TIMING
-        timespec tpstart, tpend;
-        LOGD("Entering layer %s type %s\n", layers[i]->name().c_str(), layers[i]->type().c_str());
-        clock_gettime(CLOCK_MONOTONIC, &tpstart);
-#endif
-        switch (rt_param->device_type())
-        {
-            case DeviceType::CPU:
-                layers[i]->ForwardReshape();
-                break;
-            case DeviceType::GPU_CL:
-#ifdef FEATHER_OPENCL
-                layers[i]->ForwardReshapeCL();
-                break;
-#else
-                LOGE("Please compile OpenCL to use device type GPU_CL.");
-                return -1;
-#endif
-            case DeviceType::GPU_GL:
-                LOGE("Not implemented yet");
-                return -1;
-            default:
-                LOGE("Unsupported device type");
-                return -1;
-        }
-#ifdef LAYER_TIMING
-        clock_gettime(CLOCK_MONOTONIC, &tpend);
-        double timedif = 1000000.0 * (tpend.tv_sec - tpstart.tv_sec) + (tpend.tv_nsec - tpstart.tv_nsec) / 1000.0;
-        LOGD("Layer %s type %s spent %lfms\n", layers[i]->name().c_str(), layers[i]->type().c_str(), timedif / 1000.0);
-#endif
-    }
+//     for (int i = 1; i < layer_size; ++i)
+//     {
+//         // sleep(2);
+// #ifdef LAYER_TIMING
+//         timespec tpstart, tpend;
+//         LOGD("Entering layer %s type %s\n", layers[i]->name().c_str(), layers[i]->type().c_str());
+//         clock_gettime(CLOCK_MONOTONIC, &tpstart);
+// #endif
+//         switch (rt_param->device_type())
+//         {
+//             case DeviceType::CPU:
+//                 layers[i]->ForwardReshape();
+//                 break;
+//             case DeviceType::GPU_CL:
+// #ifdef FEATHER_OPENCL
+//                 layers[i]->ForwardReshapeCL();
+//                 break;
+// #else
+//                 LOGE("Please compile OpenCL to use device type GPU_CL.");
+//                 return -1;
+// #endif
+//             case DeviceType::GPU_GL:
+//                 LOGE("Not implemented yet");
+//                 return -1;
+//             default:
+//                 LOGE("Unsupported device type");
+//                 return -1;
+//         }
+// #ifdef LAYER_TIMING
+//         clock_gettime(CLOCK_MONOTONIC, &tpend);
+//         double timedif = 1000000.0 * (tpend.tv_sec - tpstart.tv_sec) + (tpend.tv_nsec - tpstart.tv_nsec) / 1000.0;
+//         LOGD("Layer %s type %s spent %lfms\n", layers[i]->name().c_str(), layers[i]->type().c_str(), timedif / 1000.0);
+// #endif
+//     }
 
-#ifdef FEATHER_OPENCL
-    if (rt_param->device_type() == DeviceType::GPU_CL)
-    {
-        rt_param->cl_runtime()->tuner().SetTunerPram();
-    }
-#endif
-    return 0;
-}
+// #ifdef FEATHER_OPENCL
+//     if (rt_param->device_type() == DeviceType::GPU_CL)
+//     {
+//         rt_param->cl_runtime()->tuner().SetTunerPram();
+//     }
+// #endif
+//     return 0;
+// }
 
-template<class Dtype>
-void Net<Dtype>::InitFromPath(const char *model_path)
+#if 0
+void Net::InitFromPath(const char *model_path)
 {
     CHECK_TYPE();
     FILE *fp = NULL;
@@ -353,16 +359,16 @@ void Net<Dtype>::InitFromPath(const char *model_path)
     fclose(fp);
 }
 
-template<class Dtype>
-void Net<Dtype>::InitFromStringPath(std::string model_path)
+
+void Net::InitFromStringPath(std::string model_path)
 {
     CHECK_TYPE();
     LOGI("Init model path %s", model_path.c_str());
     InitFromPath(model_path.c_str());
 }
 
-template<class Dtype>
-void Net<Dtype>::InitFromFile(FILE* fp)
+
+void Net::InitFromFile(FILE* fp)
 {
     CHECK_TYPE();
     if (fp == NULL)
@@ -385,9 +391,9 @@ void Net<Dtype>::InitFromFile(FILE* fp)
 
     free(net_buffer);
 }
+#endif
 
-template<class Dtype>
-int Net<Dtype>::RemoveLayer(Layer<Dtype>* target_layer)
+int Net::RemoveLayer(Layer* target_layer)
 {
     CHECK_TYPE(1);
     if (target_layer->bottom_size() != 1 || target_layer->top_size() != 1)
@@ -411,7 +417,7 @@ int Net<Dtype>::RemoveLayer(Layer<Dtype>* target_layer)
             --i;
             continue;
         }
-        Layer<Dtype> *next_layer = layers[i];
+        Layer *next_layer = layers[i];
         for (int b = 0; b < next_layer->bottom_size(); ++b)
         {
             if (next_layer->bottom(b).compare(old_bottom) == 0)
@@ -425,8 +431,8 @@ int Net<Dtype>::RemoveLayer(Layer<Dtype>* target_layer)
     target_layer = NULL;
     return 0;
 }
-template<class Dtype>
-bool Net<Dtype>::InitFromBuffer(const void *net_buffer)
+#if 0
+bool Net::InitFromBuffer(const void *net_buffer)
 {
     CHECK_TYPE(false);
     //rt_param in the param list just to distinguish.
@@ -540,7 +546,7 @@ bool Net<Dtype>::InitFromBuffer(const void *net_buffer)
             continue;
         for (int j = i + 1; j < layers.size(); ++j)
         {
-            Layer<Dtype> *next_layer = layers[j];
+            Layer *next_layer = layers[j];
             while (layers[i]->TryFuse(next_layer) == 1)
             {
 #if 0
@@ -671,114 +677,5 @@ bool Net<Dtype>::InitFromBuffer(const void *net_buffer)
     rt_param->common_mempool()->Alloc();
     return true;
 }
-
-template<class Dtype>
-int Net<Dtype>::SetProgMapFromNet(const Net<Dtype>* infer_net)
-{
-#ifdef FEATHER_OPENCL
-    if (infer_net->rt_param->device_type() == DeviceType::GPU_CL &&
-            this->rt_param->device_type() == DeviceType::GPU_CL)
-    {
-        this->rt_param->cl_runtime()->cl_program_map().insert(infer_net->rt_param->cl_runtime()->cl_program_map().begin(),
-                infer_net->rt_param->cl_runtime()->cl_program_map().end());
-    }
-    else
-    {
-        LOGE("SetProgMapFromNet device type mismatch.");
-        return -1;
-    }
 #endif
-    return 0;
-}
-
-template<class Dtype>
-flatbuffers::Offset<BlobProto> BlobToProto(flatbuffers::FlatBufferBuilder* fbb_in, const Blob<Dtype>* blob);
-
-template<>
-flatbuffers::Offset<BlobProto> BlobToProto<float>(flatbuffers::FlatBufferBuilder* fbb_in, const Blob<float>* blob)
-{
-
-    auto fbb = (flatbuffers::FlatBufferBuilder *) fbb_in;
-    std::vector<float> data_vec(blob->_data, blob->_data + blob->data_size());
-    auto data_fbvec = fbb->CreateVector(data_vec);
-    feather::BlobProtoBuilder blob_builder(*fbb);
-    blob_builder.add_num(blob->_num);
-    blob_builder.add_channels(blob->_channels);
-    blob_builder.add_height(blob->_height);
-    blob_builder.add_width(blob->_width);
-    blob_builder.add_data(data_fbvec);
-    return blob_builder.Finish();
-}
-
-template<>
-flatbuffers::Offset<BlobProto> BlobToProto<uint16_t>(flatbuffers::FlatBufferBuilder* fbb_in, const Blob<uint16_t>* blob)
-{
-
-    auto fbb = (flatbuffers::FlatBufferBuilder *) fbb_in;
-    std::vector<uint16_t> data_vec(blob->_data, blob->_data + blob->data_size());
-    auto data_fbvec = fbb->CreateVector(data_vec);
-    feather::BlobProtoBuilder blob_builder(*fbb);
-    blob_builder.add_num(blob->_num);
-    blob_builder.add_channels(blob->_channels);
-    blob_builder.add_height(blob->_height);
-    blob_builder.add_width(blob->_width);
-    // blob_builder.add_data(data_fbvec);
-    blob_builder.add_data_fp16(data_fbvec);
-    return blob_builder.Finish();
-}
-
-template<class Dtype>
-void Net<Dtype>::DumpBlobMap()
-{
-    /*
-     * Place the data in blob map as a LayerParameter
-     *
-     * Name: Results
-     * Type: Version0
-     * Bottom: Empty
-     * Tops: Blob names
-     * Blobs: corresponding blobs
-     */
-    CHECK_TYPE();
-    flatbuffers::FlatBufferBuilder fbb(1024 * 100);
-    auto dump_layer_name = fbb.CreateString("Results");
-    auto dump_layer_type = fbb.CreateString("Version0");
-
-    std::vector<flatbuffers::Offset<flatbuffers::String>> name_vec;
-    std::vector<flatbuffers::Offset<feather::BlobProto>> blob_vec;
-
-    typename std::map<std::string, const Blob<Dtype> *>::const_iterator it;
-    for (it = blob_map.begin(); it != blob_map.end(); ++it)
-    {
-        // printf("Blob %s\n", it->first.c_str());
-        auto blob_name_fbstr = fbb.CreateString(it->first);
-        name_vec.push_back(blob_name_fbstr);
-        auto blob_proto_fb = BlobToProto<Dtype>(&fbb, it->second);
-        blob_vec.push_back(blob_proto_fb);
-    }
-    auto name_vec_fb = fbb.CreateVector<flatbuffers::Offset<flatbuffers::String> >(name_vec);
-    auto blob_vec_fb = fbb.CreateVector<flatbuffers::Offset<BlobProto> >(blob_vec);
-
-    feather::LayerParameterBuilder layer_builder(fbb);
-    layer_builder.add_blobs(blob_vec_fb);
-    layer_builder.add_bottom(name_vec_fb);
-    layer_builder.add_type(dump_layer_type);
-    layer_builder.add_name(dump_layer_name);
-    auto layer = layer_builder.Finish();
-    fbb.Finish(layer);
-
-    uint8_t* net_buffer_pointer = fbb.GetBufferPointer();
-    size_t size = fbb.GetSize();
-
-    FILE *netfp = NULL;
-    netfp = fopen("dump.out", "wb");
-    fwrite(net_buffer_pointer, sizeof(uint8_t), size, netfp);
-    fclose(netfp);
-}
-
-template class Net<float>;
-#ifdef FEATHER_OPENCL
-template class Net<uint16_t>;
-#endif
-
 };

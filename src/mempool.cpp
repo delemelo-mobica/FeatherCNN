@@ -17,7 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "common.h"
+#include "utils.h"
 #include "booster/helper.h"
 template<typename PTR_TYPE>
 CommonMemPool<PTR_TYPE>::~CommonMemPool()

@@ -168,10 +168,8 @@ int ParamDict::load_param(FILE* fp)
                 return -1;
             }
         }
-
         params[id].loaded = 1;
     }
-
     return 0;
 }
 

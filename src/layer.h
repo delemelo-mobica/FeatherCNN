@@ -17,102 +17,49 @@
 #include "blob.h"
 #include "mempool.h"
 #include "rt_param.h"
-#ifdef __ARM_NEON
-#include <arm_neon.h>
-#endif
+#include "utils.h"
 #include <vector>
-#include <map>
-#include "common.h"
-
-#ifdef FEATHER_OPENCL
-#include <CLHPP/opencl_kernels.hpp>
-#endif
 
 namespace feather
 {
-
-//#define TIMING_CL
-
-template<class Dtype>
 class Layer
 {
     public:
-        Layer(const void* layer_param, RuntimeParameter<Dtype>* rt_param);//Layer param must be LayerParameter type
+        Layer(RuntimeParameter<float>* rt_param);
         ~Layer();
-        int SetupBottomBlob(const Blob<Dtype>* p_blob, std::string name);
 
-        int ReplaceBottomBlob(std::string old_bottom, std::string new_bottom, const Blob<Dtype>* p_blob);
-
+        int SetupBottomBlob(const Blob<float>* p_blob, std::string name);
+        int ReplaceBottomBlob(std::string old_bottom, std::string new_bottom, const Blob<float>* p_blob);
         int TryFuse(Layer *next_layer);
 
-#ifdef FEATHER_OPENCL
-        virtual int InitKernelInfo(std::string kname, std::string pname);
+        const Blob<float> *FindBottomByName(std::string name);
+        Blob<float> *FindTopByName(std::string name);
 
-        virtual int SetKernelParameters();
-
-        virtual int SetBuildOptions();
-
-        virtual int SetWorkSize(std::string kname, int output_height, int output_width, int& channel_block_size);
-
-        virtual int ResetWorkSize(std::string kname, int output_height, int output_width);
-
-        virtual int ForwardCL();
-
-        virtual int ForwardReshapeCL();
-#endif
-
+        virtual int LoadParams();
+        virtual int LoadWeights();
         virtual int Fuse(Layer* next_layer);
-
         virtual int GenerateTopBlobs();
-
-        //Other initializaiton operations
         virtual int Init();
-
         virtual int Forward();
-
         virtual int ForwardReshape();
 
-        std::string name();
-        std::string type();
-        std::string bottom(size_t i);
-        size_t bottom_size();
-        std::string top(size_t i);
-        size_t top_size();
-        size_t top_blob_size();
-        const Blob<Dtype>* top_blob(std::string name);
-        const Blob<Dtype>* top_blob(size_t idx);
-        const Blob<Dtype>* bottom_blob(size_t idx);
         //For fusing
-        const size_t weight_blob_num() const;
-        const Blob<Dtype>* weight_blob(size_t i) const;
         bool fusible() const;
-    protected:
-        std::string _name;
-        std::string _type;
 
-        std::vector<std::string> _bottom;
-        std::vector<std::string> _top;
+        std::string name;
+        std::string type;
 
-        std::map<std::string, const Blob<Dtype>* > _bottom_blobs; //We don't want to do computation inplace.
-        std::map<std::string, Blob<Dtype>* > _top_blobs;
+        std::vector<const Blob<float>* > bottoms; // Don't write bottom blobs.
+        std::vector<Blob<float>* > tops;
 
-        std::vector<Blob<Dtype>* > _weight_blobs;
+        std::vector<Blob<float>* > weights;
 
         bool _fusible;
         bool _inplace;
 
-        size_t num_threads;
-
-        CommonMemPool<Dtype>    *common_mempool;
-
-        PrivateMemPool<Dtype>   private_mempool;
-
-        RuntimeParameter<Dtype> *rt_param;
-
-#ifdef FEATHER_OPENCL
-        std::map<std::string, clhpp_feather::CLKernelInfo> cl_kernel_info_map;
-        clhpp_feather::OpenCLMemType mem_type;
-#endif
+        CommonMemPool<float>    *common_mempool;
+        PrivateMemPool<float>   private_mempool;
+        RuntimeParameter<float> *rt_param;
 };
 
 };

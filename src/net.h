@@ -26,32 +26,32 @@
 
 namespace feather
 {
-template <class Dtype>
 class Net
 {
     public:
         Net(size_t num_threads, DeviceType device_type);
 
         ~Net();
-        void InitFromPath(const char *model_path);
-        void InitFromStringPath(std::string model_path);
-        void InitFromFile(FILE *fp);
-        bool InitFromBuffer(const void *net_buffer);
-        int Forward(float *input);
-        int Forward(float *input, int height, int width);
-        int RemoveLayer(Layer<Dtype> *layer);
+        /* Deprecated */
+        // void InitFromPath(const char *model_path);
+        // void InitFromStringPath(std::string model_path);
+        // void InitFromFile(FILE *fp);
+        // bool InitFromBuffer(const void *net_buffer);
+        
+        void LoadParam(const char * param_path);
+        void LoadWeights(const char * weights_path);
+
+        void SetInput(const char* input_name, const void * input_data);
+        int Forward();
+          
         int GetBlobDataSize(size_t *data_size, std::string blob_name);
         int PrintBlobData(std::string blob_name);
         int ExtractBlob(float *output_ptr, std::string blob_name);
-        void DumpBlobMap();
-
-        int SetProgMapFromNet(const Net<Dtype> *infer_net);
-        bool CheckDtype();
 
         std::map<std::string, const Blob<Dtype> *> blob_map;
+    private:
+        int RemoveLayer(Layer *layer);
         RuntimeParameter<Dtype> *rt_param;
-        std::vector<Layer<Dtype> *> layers;
-
-
+        std::vector<Layer *> layers;
 };
 }; // namespace feather

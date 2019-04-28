@@ -14,14 +14,9 @@
 
 #pragma once
 
-#include <string>
-#include <assert.h>
-#include <stdio.h>
-#include "common.h"
+#include "utils.h"
 
-#ifdef FEATHER_OPENCL
-#include "CLHPP/clhpp_common.hpp"
-#endif
+#include <string>
 
 namespace feather
 {
@@ -30,49 +25,31 @@ class Blob
 {
     public:
         Blob()
-            : _num(0), _channels(0), _height(0), _width(0), _data(NULL)
-#ifdef FEATHER_OPENCL
-            , _data_cl_buffer(NULL), _data_float(NULL), _data_cl_image(NULL)
-#endif
+            : name(), _num(0), _channels(0), _height(0), _width(0), _data(NULL)
+        {}
+
+        explicit Blob(std::string name)
+            : name(name), _num(0), _channels(0), _height(0), _width(0), _data(NULL)
         {}
 
         explicit Blob(const size_t num, const size_t channels, const size_t height, const size_t width)
-            : _data(NULL), _num(num), _channels(channels), _height(height), _width(width), _name()
-#ifdef FEATHER_OPENCL
-            , _data_cl_buffer(NULL), _data_float(NULL), _data_cl_image(NULL)
-#endif
+            : name(), _data(NULL), _num(num), _channels(channels), _height(height), _width(width)
         {}
-
 
         explicit Blob(Dtype* data, const size_t num, const size_t channels, const size_t height, const size_t width)
-            : _data(data), _num(num), _channels(channels), _height(height), _width(width), _name()
-#ifdef FEATHER_OPENCL
-            , _data_cl_buffer(NULL), _data_float(NULL), _data_cl_image(NULL)
-#endif
-        {}
-
-        explicit Blob(Dtype* data, size_t num, size_t channels, size_t height, size_t width, std::string name)
-            : _data(data), _num(num), _channels(channels), _height(height), _width(width), _name(name)
-#ifdef FEATHER_OPENCL
-            , _data_cl_buffer(NULL), _data_float(NULL), _data_cl_image(NULL)
-#endif
+            : name(), _data(data), _num(num), _channels(channels), _height(height), _width(width)
         {}
 
         ~Blob()
         {
             Free();
-#ifdef FEATHER_OPENCL
-            FreeDevice();
-#endif
         }
 
         void Free();
         void Alloc();
 
         void ReshapeWithRealloc(const Blob<Dtype> *p_blob);
-
         void ReshapeWithRealloc(int num, int channels, int height, int width);
-
         void Realloc(size_t elem_size);
 
         void CopyData(const Dtype* data)
@@ -96,21 +73,14 @@ class Blob
             CopyData(p_blob->data());
         }
 
-        void FromProto(const void *proto_in);//proto MUST be of type BlobProto*
-
         Dtype* data() const
         {
-            return _data;
+            return (Dtype*) _data;
         }
 
         size_t data_size() const
         {
             return _num * _channels * _height * _width;
-        }
-
-        std::string name()
-        {
-            return _name;
         }
         size_t num() const
         {
@@ -130,76 +100,19 @@ class Blob
         }
         void PrintBlobInfo() const
         {
-            printf("----BlobInfo----\n");
-            printf("Shape in nchw (%zu %zu %zu %zu)\n", _num, _channels, _height, _width);
+            printf("----BlobShape----\n");
+            printf("NCHW=(%zu %zu %zu %zu)\n", _num, _channels, _height, _width);
             printf("----------------\n");
         }
 
-#ifdef FEATHER_OPENCL
-        cl::Buffer* data_cl_buffer() const
-        {
-            return _data_cl_buffer;
-        }
-        cl::Image2D* data_cl_image() const
-        {
-            return _data_cl_image;
-        }
-        float* data_float() const
-        {
-            if (std::is_same<Dtype, uint16_t>::value)
-                return _data_float;
-            else
-                return reinterpret_cast<float*>(_data);
-        }
-        size_t channel_grp() const
-        {
-            return _channel_grp;
-        }
-        size_t get_channels_padding() const
-        {
-            return (_channels / _channel_grp + !!(_channels % _channel_grp)) * _channel_grp;
-        }
-        size_t get_num_padding() const
-        {
-            return (_num / _num_grp + !!(_num % _num_grp)) * _num_grp;
-        }
-        size_t data_size_padded_c() const
-        {
-            return _num * get_channels_padding() * _height * _width;
-        }
-        size_t data_size_padded_n() const
-        {
-            return get_num_padding() * _channels * _height * _width;
-        }
-        size_t data_size_padded_nc() const
-        {
-            return get_num_padding() * get_channels_padding() * _height * _width;
-        }
-        int AllocDevice(cl::Context context, size_t data_size);
-        int AllocDeviceImage(cl::Context context, size_t height, size_t width);
-        int FreeDevice();
-        int ReshapeWithReallocDevice(cl::Context context, size_t num, size_t channels, size_t height, size_t width);
+        std::string name;
 
-        int WriteToDevice(cl::CommandQueue queue, const Dtype* data, size_t data_size);
-        int ReadFromDevice(cl::CommandQueue queue, Dtype* data, size_t data_size) const;
-        int ReadFromDeviceCHW(cl::CommandQueue queue, float* data) const;
-#endif
+        void* _data;
+        size_t _elemsize;
 
-        Dtype* _data;
-
-#ifdef FEATHER_OPENCL
-        /* Image2D in the near future */
-        cl::Buffer *_data_cl_buffer;
-        cl::Image2D *_data_cl_image;
-        float* _data_float;
-#endif
         size_t _num;
         size_t _channels;
         size_t _height;
         size_t _width;
-        size_t _channel_grp = 4;
-        size_t _num_grp = 4;
-
-        std::string _name;
 };
 };

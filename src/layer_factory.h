@@ -27,15 +27,11 @@ using namespace std;
 
 namespace feather
 {
-template <class Dtype>
 class Layer;
-
-
-template <class Dtype>
 class LayerRegistry
 {
     public:
-        typedef Layer<Dtype>* (*Creator)(const LayerParameter *, RuntimeParameter<Dtype> *);
+        typedef Layer* (*Creator)(RuntimeParameter<float> *);
         typedef std::map<string, Creator> CreatorRegistry;
 
         static CreatorRegistry &Registry()
@@ -52,17 +48,17 @@ class LayerRegistry
         }
 
         // Get a layer using a LayerParameter.
-        static Layer<Dtype> *CreateLayer(const LayerParameter *param, RuntimeParameter<Dtype> *rt_param)
+        static Layer *CreateLayer(std::string type, RuntimeParameter<float> *rt_param)
         {
-            const string &type = param->type()->str();
+            // const string &type = param->type()->str();
             CreatorRegistry &registry = Registry();
             if (registry.find(type) != registry.end())
             {
-                return registry[type](param, rt_param);
+                return registry[type](rt_param);
             }
             else
             {
-                fprintf(stderr, "Layer type %s not registered\n", type.c_str());
+                fprintf(stderr, "Layer type %s is not supported in FeatherCNN...Aborting\n", type.c_str());
                 return NULL;
             }
         }
@@ -74,19 +70,22 @@ class LayerRegistry
 };
 
 
-template <class Dtype>
 class LayerRegisterer
 {
     public:
         LayerRegisterer(const string &type,
-                        Layer<Dtype> * (*creator)(const LayerParameter *, RuntimeParameter<Dtype>*))
+                        Layer * (*creator)(RuntimeParameter<float>* ))
         {
-            LayerRegistry<Dtype>::AddCreator(type, creator);
+            LayerRegistry::AddCreator(type, creator);
         }
 };
 
 void register_layer_creators();
 
-#define REGISTER_LAYER_CREATOR(type, creator) \
-    static LayerRegisterer<float> g_creator_f_##type(#type, creator);
+#define DEFINE_LAYER_CREATOR(feather_layer_name) \
+    static Layer *GetLayer##feather_layer_name(RuntimeParameter<float> * rt_param) \
+    {return (Layer *) feather_layer_name##Layer;}
+
+#define REGISTER_LAYER_CREATOR(ncnn_type_name, feather_layer_name) \
+    static LayerRegisterer g_creator_f_##ncnn_type_name(#ncnn_type_name, GetLayer##feather_layer_name);
 };

@@ -51,8 +51,8 @@ public:
     int use_int8_inference;
     int use_vulkan_compute;
 
-protected:
-    friend class Net;
+public:
+    // friend class Net;
 
     void clear();
 
